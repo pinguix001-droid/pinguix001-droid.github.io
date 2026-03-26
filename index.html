@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="tr" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pitch Hero - Guitar Edition</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Exo+2:wght@300;400;600&display=swap" rel="stylesheet">
+    <style>
+        * { box-sizing: border-box; }
+        html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; background: #0a0a1a; color: #fff; font-family: 'Exo 2', sans-serif; }
+        #game-wrapper { width: 100%; height: 100%; display: flex; flex-direction: column; position: relative; overflow: hidden; }
+        .bg-grid { position: absolute; inset: 0; background-size: 40px 40px; background-image: linear-gradient(rgba(0,255,180,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(0,255,180,0.04) 1px, transparent 1px); animation: gridMove 20s linear infinite; pointer-events: none; }
+        @keyframes gridMove { 0% { background-position: 0 0; } 100% { background-position: 0 40px; } }
+        #highway { position: relative; flex: 1; display: flex; border-bottom: 2px solid rgba(0,255,180,0.3); }
+        .lane { flex: 1; height: 100%; position: relative; border-right: 1px solid rgba(255,255,255,0.06); }
+        .note-block { position: absolute; left: 10%; width: 80%; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-family: 'Orbitron'; font-size: 12px; font-weight: 700; border: 1px solid rgba(255,255,255,0.3); }
+        #hit-zone { position: absolute; bottom: 80px; left: 0; right: 0; height: 10px; background: rgba(0,255,180,0.2); box-shadow: 0 0 20px rgba(0,255,180,0.5); z-index: 10; }
+        #hud { display: flex; justify-content: space-between; padding: 15px; background: rgba(0,0,0,0.8); border-bottom: 1px solid #333; z-index: 50; }
+        .overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.9); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 100; text-align: center; padding: 20px; }
+        .btn-primary { padding: 15px 40px; background: linear-gradient(135deg, #00ffb4, #00bfff); color: #000; border: none; border-radius: 30px; font-family: 'Orbitron'; font-weight: 900; cursor: pointer; margin-top: 20px; }
+        .song-card { background: rgba(255,255,255,0.05); padding: 15px; margin: 10px; border-radius: 10px; cursor: pointer; width: 300px; border: 1px solid #333; }
+        .song-card.selected { border-color: #00ffb4; background: rgba(0,255,180,0.1); }
+    </style>
+</head>
+<body>
+    <div id="game-wrapper">
+        <div class="bg-grid"></div>
+
+        <div id="hud">
+            <div>
+                <div id="score-display" style="font-family: 'Orbitron'; color: #00ffb4; font-size: 24px;">0</div>
+                <div id="combo-display">COMBO x1</div>
+            </div>
+            <div style="text-align: right;">
+                <div id="detected-note" style="font-family: 'Orbitron'; font-size: 20px;">—</div>
+                <div id="mic-status" style="font-size: 10px; color: #888;">MIKROFON BEKLENİYOR...</div>
+            </div>
+        </div>
+
+        <div id="highway">
+            <div class="lane" id="lane-0"></div>
+            <div class="lane" id="lane-1"></div>
+            <div class="lane" id="lane-2"></div>
+            <div class="lane" id="lane-3"></div>
+            <div class="lane" id="lane-4"></div>
+            <div id="hit-zone"></div>
+        </div>
+
+        <div id="start-overlay" class="overlay">
+            <h1 class="text-4xl font-black mb-4" style="font-family: 'Orbitron'; color: #00ffb4;">PITCH HERO</h1>
+            <p>Gitarınla veya sesinle notaları yakala!</p>
+            <button class="btn-primary" onclick="initGame()">MIKROFONU AC VE BASLA</button>
+        </div>
+
+        <div id="song-select-overlay" class="overlay" style="display:none;">
+            <h2 class="text-2xl mb-4 font-bold">SARKI SEC</h2>
+            <div id="song-list"></div>
+            <button class="btn-primary" onclick="startGame()">OYNA!</button>
+        </div>
+    </div>
+
+    <script>
+        const SONGS = [
+            {
+                id: 1, title: "Med Cezir (Intro)", artist: "Levent Yüksel",
+                notes: [
+                    {note:"A4", dur:800, lane:4}, {note:"G4", dur:800, lane:3}, {note:"E4", dur:800, lane:2},
+                    {note:"D4", dur:800, lane:1}, {note:"C4", dur:1200, lane:0}
+                ]
+            },
+            {
+                id: 2, title: "Nothing Else Matters", artist: "Metallica",
+                notes: [
+                    {note:"E3", dur:600, lane:2}, {note:"G3", dur:600, lane:3}, {note:"B3", dur:600, lane:4},
+                    {note:"E4", dur:1200, lane:2}, {note:"B3", dur:600, lane:4}, {note:"G3", dur:600, lane:3}
+                ]
+            }
+        ];
+
+        let audioCtx, analyser, micStream, selectedSong = SONGS[0];
+        let score = 0, combo = 1, isPlaying = false;
+        const NOTE_SPEED = 200; 
+
+        function initGame() {
+            navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioCtx.createAnalyser();
+                const source = audioCtx.createMediaStreamSource(stream);
+                source.connect(analyser);
+                document.getElementById('mic-status').innerText = "MIKROFON AKTIF";
+                document.getElementById('mic-status').style.color = "#00ffb4";
+                showSongSelect();
+            }).catch(err => alert("Mikrofon izni gerek!"));
+        }
+
+        function showSongSelect() {
+            document.getElementById('start-overlay').style.display = 'none';
+            document.getElementById('song-select-overlay').style.display = 'flex';
+            const list = document.getElementById('song-list');
+            list.innerHTML = '';
+            SONGS.forEach(s => {
+                const div = document.createElement('div');
+                div.className = `song-card ${selectedSong.id === s.id ? 'selected' : ''}`;
+                div.innerHTML = `<strong>${s.title}</strong><br><small>${s.artist}</small>`;
+                div.onclick = () => { selectedSong = s; showSongSelect(); };
+                list.appendChild(div);
+            });
+        }
+
+        function startGame() {
+            document.getElementById('song-select-overlay').style.display = 'none';
+            isPlaying = true;
+            let timeOffset = 0;
+            selectedSong.notes.forEach((n, i) => {
+                setTimeout(() => spawnNote(n), timeOffset);
+                timeOffset += n.dur + 200;
+            });
+            detectPitch();
+        }
+
+        function spawnNote(n) {
+            const lane = document.getElementById(`lane-${n.lane}`);
+            const el = document.createElement('div');
+            el.className = 'note-block';
+            el.style.top = '-50px';
+            el.style.height = '40px';
+            el.style.background = '#00ffb4';
+            el.innerText = n.note;
+            lane.appendChild(el);
+
+            let pos = -50;
+            const interval = setInterval(() => {
+                pos += 2;
+                el.style.top = pos + 'px';
+                if (pos > window.innerHeight) { clearInterval(interval); el.remove(); }
+            }, 10);
+            el.dataset.interval = interval;
+        }
+
+        function detectPitch() {
+            const buffer = new Float32Array(2048);
+            const loop = () => {
+                if(!isPlaying) return;
+                analyser.getFloatTimeDomainData(buffer);
+                // Pitch tespiti (basitlestirilmis)
+                requestAnimationFrame(loop);
+            };
+            loop();
+        }
+    </script>
+</body>
+</html>
